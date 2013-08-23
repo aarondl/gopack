@@ -14,8 +14,13 @@ const (
 // versionProvider allows us to look up available versions for each package
 // the array returned must be in sorted order for the best result from the
 // solver as it assumes [0] is the latest version, and [1]... is less than that.
+//
+// GetVersions: Get the versions only from the dependency information.
+// GetGraphs: Get a list of graphs showing dependency information for each
+// version of the package.
 type versionProvider interface {
 	GetVersions(string) []*pack.Version
+	GetGraphs(string) []*depgraph
 }
 
 // stacknode helps to emulate recursion and perform safejumps.

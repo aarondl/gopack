@@ -54,7 +54,7 @@ func mkGraph(graph string) (g *depgraph) {
 			if err != nil {
 				panic("Bad dep:" + line)
 			}
-			previous = &depnode{d: dep}
+			previous = &depnode{d: dep, v: dep.Constraints[0].Version}
 			g.head = previous
 			parent = previous
 			stack = append(stack, previous)
@@ -103,7 +103,7 @@ func mkGraph(graph string) (g *depgraph) {
 }
 
 var printTest = mkGraph(`
-pack1 >=0.0.1
+pack1 0.0.1
 -pack3 ~1.0.0 !=1.1.2
 --pack4 ~2.0.0
 ---pack5 ~3.0.0
@@ -117,7 +117,7 @@ pack1 >=0.0.1
 
 func TestDepgraph_String(t *T) {
 	expect :=
-		"pack1 (>=0.0.1)\n" +
+		"pack1 0.0.1 (=0.0.1)\n" +
 			"├─┬ pack3 1.2.3 (~1.0.0 !=1.1.2)\n" +
 			"│ ├─┬ pack4 (~2.0.0)\n" +
 			"│ │ └─┬ pack5 (~3.0.0)\n" +

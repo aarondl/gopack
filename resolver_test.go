@@ -6,11 +6,21 @@ import (
 )
 
 type testVersionProvider struct {
-	versions map[string][]*pack.Version
+	graphs map[string][]*depgraph
 }
 
-func (tvp *testVersionProvider) GetVersions(name string) []*pack.Version {
-	return tvp.versions[name]
+func (tvp *testVersionProvider) GetVersions(name string) (vs []*pack.Version) {
+	if graphs, ok := tvp.graphs[name]; ok {
+		vs = make([]*pack.Version, len(graphs))
+		for i := 0; i < len(graphs); i++ {
+			vs[i] = graphs[i].head.v
+		}
+	}
+	return
+}
+
+func (tvp *testVersionProvider) GetGraphs(name string) []*depgraph {
+	return tvp.graphs[name]
 }
 
 type testDepGraphProvider struct {
@@ -21,12 +31,34 @@ func (tdgp *testDepGraphProvider) GetGraph() *depgraph {
 	return tdgp.graph
 }
 
-var repository = testVersionProvider{map[string][]*pack.Version{
-	"root":   mkVers("1.0.0"),
-	"apple":  mkVers("1.0.0", "0.2.1", "0.0.1"),
-	"banana": mkVers("1.0.0", "0.1.0", "0.1.0-dev", "0.0.1"),
-	"carrot": mkVers("1.0.0", "0.1.0", "0.1.0-dev", "0.0.1"),
-	"durian": mkVers("1.0.1", "1.0.0", "0.0.2", "0.0.1"),
+var repository = testVersionProvider{map[string][]*depgraph{
+	`apple`: []*depgraph{
+		mkGraph(
+			`apple 0.0.1
+			-durian >=0.0.1`,
+		),
+		mkGraph(
+			`apple 1.0.0`,
+		),
+	},
+	`banana`: []*depgraph{
+		mkGraph(
+			`banana 0.0.1
+			-durian <0.0.1`,
+		),
+		mkGraph(
+			`banana 1.0.0`,
+		),
+	},
+	`carrot`: []*depgraph{
+		mkGraph(
+			`carrot 0.0.1
+			-durian =0.0.1`,
+		),
+		mkGraph(
+			`carrot 1.0.0`,
+		),
+	},
 }}
 
 /*var basic = mkTree(`
@@ -88,9 +120,7 @@ func TestSolver_DepthFirst(t *T) {
 	var depthFirst = mkGraph(`
 	root 1.0.0
 	-apple
-	--carrot
 	-banana
-	--durian
 	`)
 
 	t.Log(depthFirst.String())
@@ -114,9 +144,7 @@ func TestSolver_Constraints(t *T) {
 	var constraints = mkGraph(`
 	root 1.0.0
 	-apple 0.0.1
-	--carrot ~0.0.1
 	-banana 0.0.1
-	--durian 0.0.1
 	`)
 
 	if !constraints.solve(&repository) {
