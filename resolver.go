@@ -1,95 +1,198 @@
 package main
 
 import (
-	"bytes"
+	"fmt"
 	"github.com/aarondl/pack"
 )
 
 const (
-	rightpipe = '├'
-	downpipe  = '┬'
-	endpipe   = '└'
-	horizpipe = '─'
-	vertpipe  = '│'
-	space     = ' '
-	newline   = '\n'
+	initialStackSize        = 20
+	kidOffset               = 32
+	stackIndexMask   uint64 = 0xFFFFFFFF
 )
 
-// versionProvider allows us to look up available versions for each package.
+// versionProvider allows us to look up available versions for each package
+// the array returned must be in sorted order for the best result from the
+// solver as it assumes [0] is the latest version, and [1]... is less than that.
 type versionProvider interface {
 	GetVersions(string) []*pack.Version
 }
 
-// depGraphProvider allows retrieval of a dependency graph to solve.
-type depGraphProvider interface {
-	GetGraph() *depGraph
+// stacknode helps to emulate recursion and perform safejumps.
+type stacknode struct {
+	kid     int
+	version int
+	*depnode
 }
 
-// depNode is a dependency node.
-type depNode struct {
-	*pack.Dependency
-	v    *pack.Version
-	kids []*depNode
-}
-
-// depGraph is a dependency graph.
-type depGraph struct {
-	head *depNode
+// activation is the details of a packages activation.
+type activation struct {
+	// activators is split into two int32's: 0-31 = stackindex, 32-63 = kid
+	activators []uint64
+	v          *pack.Version
 }
 
 // solve solves a dependency graph.
-func (d *depGraph) solve(graph *depGraph, vp versionProvider) bool {
-	return false
-}
+// This algorithm works like this:
+// 1. Do depth first search of the graph. (using iteration not recursion)
+// 2. Loop through deps, has this been activated?
+//  2.l. If yes, can we use it?
+//     2.1.1. If yes, activate, add us to the list of activators.
+//     2.1.2. If no, backjump to our activation.
+//  2.2. If no, backjump to packages last activation spot.
+// 3. Profit???
+func (g *depgraph) solve(vp versionProvider) bool {
+	var verbose = true // Move to flag
 
-// String turns a depgraph into a string.
-func (d depGraph) String() string {
-	var b bytes.Buffer
+	var stack = make([]stacknode, 0, initialStackSize) // Avoid allocations
+	var index = 0
+	var kid, version int
+	var backjump uint64
+	var hasConflict bool
+	var current *depnode
+	var active = make(map[string]activation)
 
-	depGraphVisualize(d.head, 0, 0, len(d.head.kids) == 0, &b)
-	return b.String()
-}
+	current = g.head
 
-// depGraphVisualize builds a graph visualization.
-func depGraphVisualize(n *depNode, depth, cur int, last bool, b *bytes.Buffer) {
-	kids := len(n.kids)
+	for i := 0; i < 20; i++ {
+		if verbose {
+			fmt.Printf("Eval: %s (%v, %v)\n", current.d.Name, kid, version)
+		}
 
-	if depth > 0 {
-		for i := 1; i < depth; i++ {
-			if i < cur+1 {
-				b.WriteRune(vertpipe)
-			} else {
-				b.WriteRune(space)
+		hasConflict = false
+
+		// Have we run out of dependencies to resolve?
+		if kid >= len(current.kids) {
+			if verbose {
+				fmt.Println("Ran out of children...")
 			}
-			b.WriteRune(space)
+			// Jump up stack.
+			if index > 0 {
+				index--
+				current = stack[index].depnode
+				version = stack[index].version
+				stack[index].kid++
+				kid = stack[index].kid
+				if verbose {
+					fmt.Printf("Pop: %s (%v, %v)\n", current.d.Name,
+						kid, version)
+				}
+				continue
+			}
+			if verbose {
+				fmt.Println("Nothing left to do, should be solved.")
+			}
+			// We did it!!!!
+			return true
 		}
-		if last {
-			b.WriteRune(endpipe)
+
+		// Try to activate child
+		curkid := current.kids[kid]
+		name := curkid.d.Name
+		fmt.Println("Attempting child activation:", name)
+
+		// Check if already activated
+		if act, ok := active[name]; ok {
+			for _, con := range curkid.d.Constraints {
+				if act.v.Satisfies(con.Operator, con.Version) {
+					// Add ourselves to the activators list.
+					act.activators = append(act.activators,
+						uint64(uint(kid)<<kidOffset|uint(index)))
+					if verbose {
+						fmt.Println(name, "satisfied by previous activation:",
+							act.v, act.activators)
+					}
+				} else {
+					// Backjump
+					backjump = act.activators[len(act.activators)-1]
+					hasConflict = true
+					if verbose {
+						fmt.Printf("Found conflict: %s (%v)\n", name, act.v)
+						fmt.Print("Previous activators: ")
+						for _, a := range act.activators {
+							fmt.Printf("[%v, %v], ",
+								a>>kidOffset, a&stackIndexMask)
+						}
+						fmt.Println()
+					}
+				}
+			}
+		}
+
+		if hasConflict {
+			//Backjump (avoids using goto, this is dumb)
+			index = int(backjump & stackIndexMask)
+			kid = int(backjump >> kidOffset)
+			if verbose {
+				fmt.Println("Backjumping:", index, kid)
+			}
+			continue
+		}
+
+		// Get versions
+		vs := vp.GetVersions(name)
+		if verbose {
+			fmt.Printf("Versions: %s %v\n", name, vs)
+		}
+		if verbose {
+			fmt.Println("Iterating from:", version)
+		}
+		// Each version
+		for ; version < len(vs); version++ {
+			// Each constraint
+			ver := vs[version]
+			for _, con := range curkid.d.Constraints {
+				if ver.Satisfies(con.Operator, con.Version) {
+					if verbose {
+						fmt.Println("Found a version to satisfy:", curkid.d, ver)
+					}
+					curkid.v = ver
+				}
+				if curkid.v != nil {
+					fmt.Println("No need for more constraint checks... Breaking.")
+					break
+				}
+			}
+			if len(curkid.d.Constraints) == 0 {
+				curkid.v = ver
+			}
+			if curkid.v != nil {
+				fmt.Println("No need to check more versions... Breaking")
+				break
+			}
+		}
+
+		// No version found to satisfy.
+		if curkid.v == nil {
+			if verbose {
+				fmt.Println("No versions available to satisfy:", curkid.d)
+			}
+			return false
 		} else {
-			b.WriteRune(rightpipe)
+			if verbose {
+				fmt.Printf("Activating: %s %v (%v, %v)\n",
+					curkid.d.Name, curkid.v, version, index)
+			}
+			active[name] = activation{[]uint64{
+				uint64(uint(kid)<<kidOffset | uint(index))}, curkid.v}
 		}
-		if kids > 0 {
-			b.WriteRune(horizpipe)
-			b.WriteRune(downpipe)
+
+		if len(curkid.kids) > 0 {
+			if verbose {
+				fmt.Println("Has kids:", len(curkid.kids))
+				fmt.Printf("Push: %s (%v, %v)\n", current.d.Name, kid, version)
+			}
+			stack = append(stack, stacknode{kid, version, current})
+			kid = 0
+			version = 0
+			current = curkid
+			index++
 		} else {
-			b.WriteRune(horizpipe)
+			kid++
+			if verbose {
+				fmt.Println("Next kid:", kid)
+			}
 		}
-		b.WriteRune(space)
 	}
-
-	b.WriteString(n.Dependency.String())
-	if !last || kids > 0 || cur > 0 {
-		b.WriteByte(newline)
-	}
-
-	for i := 0; i < kids; i++ {
-		last = i+1 == kids
-		curActive := cur
-		if !last {
-			curActive++
-		}
-		depGraphVisualize(n.kids[i], depth+1, curActive, last, b)
-	}
-
-	return
+	return false
 }
