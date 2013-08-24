@@ -2,8 +2,18 @@ package main
 
 import (
 	"github.com/aarondl/pack"
+	"log"
+	"os"
 	. "testing"
 )
+
+func init() {
+	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	return
+	if err == nil {
+		log.SetOutput(f)
+	}
+}
 
 type testVersionProvider struct {
 	graphs map[string][]*depgraph
@@ -34,30 +44,47 @@ func (tdgp *testDepGraphProvider) GetGraph() *depgraph {
 var repository = testVersionProvider{map[string][]*depgraph{
 	`apple`: []*depgraph{
 		mkGraph(
-			`apple 0.0.1
-			-durian >=0.0.1`,
+			`apple 1.0.0`,
 		),
 		mkGraph(
-			`apple 1.0.0`,
+			`apple 0.0.1
+			-durian >=0.0.1`,
 		),
 	},
 	`banana`: []*depgraph{
 		mkGraph(
-			`banana 0.0.1
-			-durian <0.0.1`,
+			`banana 1.0.0`,
 		),
 		mkGraph(
-			`banana 1.0.0`,
+			`banana 0.0.1
+			-durian <0.0.5`,
 		),
 	},
 	`carrot`: []*depgraph{
 		mkGraph(
+			`carrot 1.0.0`,
+		),
+		mkGraph(
 			`carrot 0.0.1
 			-durian =0.0.1`,
 		),
-		mkGraph(
-			`carrot 1.0.0`,
-		),
+	},
+	`durian`: []*depgraph{
+		mkGraph(`
+			durian 1.0.0
+		`),
+		mkGraph(`
+			durian 0.0.1
+		`),
+	},
+	`eggplant`: []*depgraph{
+		mkGraph(`
+			eggplant 1.0.0
+			-durian =1.0.0
+		`),
+		mkGraph(`
+			eggplant 0.0.1
+		`),
 	},
 }}
 
@@ -104,11 +131,12 @@ func TestSolver_Basic(t *T) {
 	var basic = mkGraph(`
 	root 1.0.0
 	-apple
-	-banana 0.0.1
+	-banana
 	`)
 
 	if !basic.solve(&repository) {
 		t.Error("Solution was not found.")
+		t.Error(basic.String())
 	}
 
 	if !verifySolution(basic) {
@@ -119,20 +147,13 @@ func TestSolver_Basic(t *T) {
 func TestSolver_DepthFirst(t *T) {
 	var depthFirst = mkGraph(`
 	root 1.0.0
-	-apple
+	-eggplant
 	-banana
 	`)
 
-	t.Log(depthFirst.String())
-	t.Log(depthFirst.head.d.String())
-	t.Log(depthFirst.head.kids)
-	t.Log(depthFirst.head.kids[0].d.String())
-	t.Log(depthFirst.head.kids[0].kids)
-	t.Log(depthFirst.head.kids[1].d.String())
-	t.Log(depthFirst.head.kids[1].kids)
-
 	if !depthFirst.solve(&repository) {
 		t.Error("Solution was not found.")
+		t.Error(depthFirst.String())
 	}
 
 	if !verifySolution(depthFirst) {
@@ -143,12 +164,13 @@ func TestSolver_DepthFirst(t *T) {
 func TestSolver_Constraints(t *T) {
 	var constraints = mkGraph(`
 	root 1.0.0
-	-apple 0.0.1
-	-banana 0.0.1
+	-apple =1.0.0
+	-banana >=0.0.2
 	`)
 
 	if !constraints.solve(&repository) {
 		t.Error("Solution was not found.")
+		t.Error(constraints.String())
 	}
 
 	if !verifySolution(constraints) {
@@ -159,27 +181,15 @@ func TestSolver_Constraints(t *T) {
 func TestSolver_Backjumpheaven(t *T) {
 	var backjumpHeaven = mkGraph(`
 	root 1.0.0
-	-apple
-	--durian >=0.0.1
-	-banana
-	--durian <1.0.1
-	-carrot
-	--durian =0.0.1
+	-apple 0.0.1
+	-banana 0.0.1
 	`)
-
-	t.Log(backjumpHeaven.String())
-	t.Log(backjumpHeaven.head.d.String())
-	t.Log(backjumpHeaven.head.kids)
-	t.Log(backjumpHeaven.head.kids[0].d.String())
-	t.Log(backjumpHeaven.head.kids[0].kids)
-	t.Log(backjumpHeaven.head.kids[1].d.String())
-	t.Log(backjumpHeaven.head.kids[1].kids)
-	t.Log(backjumpHeaven.head.kids[2].d.String())
-	t.Log(backjumpHeaven.head.kids[2].kids)
 
 	if !backjumpHeaven.solve(&repository) {
 		t.Error("Solution was not found.")
+		t.Error(backjumpHeaven.String())
 	}
+
 
 	if !verifySolution(backjumpHeaven) {
 		t.Error("Solution could not be verified.")

@@ -1,8 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"github.com/aarondl/pack"
+	"log"
 )
 
 const (
@@ -61,7 +61,7 @@ func (g *depgraph) solve(vp versionProvider) bool {
 
 	for i := 0; i < 20; i++ {
 		if verbose {
-			fmt.Printf("Eval: %s (%v, %v)\n", current.d.Name, kid, version)
+			log.Printf("Eval: %s (%v, %v)\n", current.d.Name, kid, version)
 		}
 
 		hasConflict = false
@@ -69,23 +69,23 @@ func (g *depgraph) solve(vp versionProvider) bool {
 		// Have we run out of dependencies to resolve?
 		if kid >= len(current.kids) {
 			if verbose {
-				fmt.Println("Ran out of children...")
+				log.Println("Ran out of children...")
 			}
 			// Jump up stack.
 			if index > 0 {
 				index--
 				current = stack[index].depnode
-				version = stack[index].version
+				//version = stack[index].version
 				stack[index].kid++
 				kid = stack[index].kid
 				if verbose {
-					fmt.Printf("Pop: %s (%v, %v)\n", current.d.Name,
+					log.Printf("Pop: %s (%v, %v)\n", current.d.Name,
 						kid, version)
 				}
 				continue
 			}
 			if verbose {
-				fmt.Println("Nothing left to do, should be solved.")
+				log.Println("Nothing left to do, should be solved.")
 			}
 			// We did it!!!!
 			return true
@@ -94,7 +94,7 @@ func (g *depgraph) solve(vp versionProvider) bool {
 		// Try to activate child
 		curkid := current.kids[kid]
 		name := curkid.d.Name
-		fmt.Println("Attempting child activation:", name)
+		log.Println("Attempting child activation:", name)
 
 		// Check if already activated
 		if act, ok := active[name]; ok {
@@ -104,7 +104,7 @@ func (g *depgraph) solve(vp versionProvider) bool {
 					act.activators = append(act.activators,
 						uint64(uint(kid)<<kidOffset|uint(index)))
 					if verbose {
-						fmt.Println(name, "satisfied by previous activation:",
+						log.Println(name, "satisfied by previous activation:",
 							act.v, act.activators)
 					}
 				} else {
@@ -112,13 +112,12 @@ func (g *depgraph) solve(vp versionProvider) bool {
 					backjump = act.activators[len(act.activators)-1]
 					hasConflict = true
 					if verbose {
-						fmt.Printf("Found conflict: %s (%v)\n", name, act.v)
-						fmt.Print("Previous activators: ")
+						log.Printf("Found conflict: %s (%v)\n", name, act.v)
+						log.Print("Previous activators: ")
 						for _, a := range act.activators {
-							fmt.Printf("[%v, %v], ",
+							log.Printf("[%v, %v], ",
 								a>>kidOffset, a&stackIndexMask)
 						}
-						fmt.Println()
 					}
 				}
 			}
@@ -129,7 +128,7 @@ func (g *depgraph) solve(vp versionProvider) bool {
 			index = int(backjump & stackIndexMask)
 			kid = int(backjump >> kidOffset)
 			if verbose {
-				fmt.Println("Backjumping:", index, kid)
+				log.Println("Backjumping:", index, kid)
 			}
 			continue
 		}
@@ -137,10 +136,10 @@ func (g *depgraph) solve(vp versionProvider) bool {
 		// Get versions
 		vs := vp.GetVersions(name)
 		if verbose {
-			fmt.Printf("Versions: %s %v\n", name, vs)
+			log.Printf("Versions: %s %v\n", name, vs)
 		}
 		if verbose {
-			fmt.Println("Iterating from:", version)
+			log.Println("Iterating from:", version)
 		}
 		// Each version
 		for ; version < len(vs); version++ {
@@ -149,12 +148,12 @@ func (g *depgraph) solve(vp versionProvider) bool {
 			for _, con := range curkid.d.Constraints {
 				if ver.Satisfies(con.Operator, con.Version) {
 					if verbose {
-						fmt.Println("Found a version to satisfy:", curkid.d, ver)
+						log.Println("Found a version to satisfy:", curkid.d, ver)
 					}
 					curkid.v = ver
 				}
 				if curkid.v != nil {
-					fmt.Println("No need for more constraint checks... Breaking.")
+					log.Println("No need for more constraint checks... Breaking.")
 					break
 				}
 			}
@@ -162,30 +161,53 @@ func (g *depgraph) solve(vp versionProvider) bool {
 				curkid.v = ver
 			}
 			if curkid.v != nil {
-				fmt.Println("No need to check more versions... Breaking")
+				log.Println("No need to check more versions... Breaking")
 				break
 			}
 		}
 
-		// No version found to satisfy.
 		if curkid.v == nil {
+			// No version found to satisfy.
 			if verbose {
-				fmt.Println("No versions available to satisfy:", curkid.d)
+				log.Println("No versions available to satisfy:", curkid.d)
 			}
 			return false
 		} else {
+			// Activate
 			if verbose {
-				fmt.Printf("Activating: %s %v (%v, %v)\n",
+				log.Printf("Activating: %s %v (%v, %v)\n",
 					curkid.d.Name, curkid.v, version, index)
 			}
 			active[name] = activation{[]uint64{
 				uint64(uint(kid)<<kidOffset | uint(index))}, curkid.v}
+
+			graphs := vp.GetGraphs(name)
+			found := false
+			for i := 0; i < len(graphs); i++ {
+				if graphs[i].head.v.Satisfies(pack.Equal, curkid.v) {
+					found = true
+					curkid.kids = graphs[i].head.kids
+					if verbose {
+						log.Println("Setting kids:", len(curkid.kids))
+					}
+					break
+				}
+			}
+
+			if !found {
+				if verbose {
+					log.Println("Dependency graph missing for: %v %v",
+						curkid.d.Name, curkid.v)
+				}
+				return false
+			}
 		}
 
 		if len(curkid.kids) > 0 {
+			// Push current on to stack, make the curkid the new current.
 			if verbose {
-				fmt.Println("Has kids:", len(curkid.kids))
-				fmt.Printf("Push: %s (%v, %v)\n", current.d.Name, kid, version)
+				log.Println("Has kids:", len(curkid.kids))
+				log.Printf("Push: %s (%v, %v)\n", current.d.Name, kid, version)
 			}
 			stack = append(stack, stacknode{kid, version, current})
 			kid = 0
@@ -193,11 +215,13 @@ func (g *depgraph) solve(vp versionProvider) bool {
 			current = curkid
 			index++
 		} else {
+			// Continue through all kids.
 			kid++
 			if verbose {
-				fmt.Println("Next kid:", kid)
+				log.Println("Next kid:", kid)
 			}
 		}
 	}
+
 	return false
 }
