@@ -30,32 +30,39 @@ type stacknode struct {
 	*depnode
 }
 
-// activation is the details of a packages activation.
-type activation struct {
-	// activators is split into two int32's: 0-31 = stackindex, 32-63 = kid
-	activators []uint64
-	v          *pack.Version
+// savestate is the state of the algorithm at an activation point.
+type savestate struct {
+	kid     int
+	version int
+	index   int
+	current *depnode
+	stack   []stacknode
 }
 
-// solve solves a dependency graph.
-// This algorithm works like this:
-// 1. Do depth first search of the graph. (using iteration not recursion)
-// 2. Loop through deps, has this been activated?
-//  2.l. If yes, can we use it?
-//     2.1.1. If yes, activate, add us to the list of activators.
-//     2.1.2. If no, backjump to our activation.
-//  2.2. If no, backjump to packages last activation spot.
-// 3. Profit???
+// activation is the details of a packages activation.
+type activation struct {
+	states []*savestate
+	v      *pack.Version
+}
+
+/*
+solve a dependency graph.
+
+This algorithm is a depth first search with backjumping to resolve conflicts.
+
+Possible optimization: don't attempt a new version of a package unless it's
+dependencies have changed.
+*/
 func (g *depgraph) solve(vp versionProvider) bool {
 	var verbose = true // Move to flag
 
 	var stack = make([]stacknode, 0, initialStackSize) // Avoid allocations
 	var index = 0
 	var kid, version int
-	var backjump uint64
-	var hasConflict bool
+	var backjump *savestate
 	var current *depnode
-	var active = make(map[string]activation)
+	var vs []*pack.Version
+	var active = make(map[string]*activation)
 
 	current = g.head
 
@@ -63,8 +70,6 @@ func (g *depgraph) solve(vp versionProvider) bool {
 		if verbose {
 			log.Printf("Eval: %s (%v, %v)\n", current.d.Name, kid, version)
 		}
-
-		hasConflict = false
 
 		// Have we run out of dependencies to resolve?
 		if kid >= len(current.kids) {
@@ -97,48 +102,50 @@ func (g *depgraph) solve(vp versionProvider) bool {
 		log.Println("Attempting child activation:", name)
 
 		// Check if already activated
-		if act, ok := active[name]; ok {
+		if act, ok := active[name]; ok && act.v != nil {
 			for _, con := range curkid.d.Constraints {
 				if act.v.Satisfies(con.Operator, con.Version) {
 					// Add ourselves to the activators list.
-					act.activators = append(act.activators,
-						uint64(uint(kid)<<kidOffset|uint(index)))
+					save := &savestate{
+						kid, version, index, current,
+						make([]stacknode, index+1),
+					}
+					copy(save.stack, stack)
+					act.states = append(act.states, save)
+
 					if verbose {
 						log.Println(name, "satisfied by previous activation:",
-							act.v, act.activators)
+							act.v, act.states)
 					}
 				} else {
 					// Backjump
-					backjump = act.activators[len(act.activators)-1]
-					hasConflict = true
+					backjump = act.states[len(act.states)-1]
 					if verbose {
 						log.Printf("Found conflict: %s (%v)\n", name, act.v)
-						log.Print("Previous activators: ")
-						for _, a := range act.activators {
-							log.Printf("[%v, %v], ",
-								a>>kidOffset, a&stackIndexMask)
+						log.Print("Previous states: ")
+						for _, a := range act.states {
+							log.Printf("%v ", a)
 						}
 					}
+					act.states = act.states[:len(act.states)-1]
+					act.v = nil
+
+					current, kid, version, index = backjump.current,
+						backjump.kid, backjump.version, backjump.index
+					copy(stack, backjump.stack)
+					if verbose {
+						log.Println("Backjumping:", index, kid)
+					}
+					version++
+					goto CONTINUELOOP
 				}
 			}
 		}
 
-		if hasConflict {
-			//Backjump (avoids using goto, this is dumb)
-			index = int(backjump & stackIndexMask)
-			kid = int(backjump >> kidOffset)
-			if verbose {
-				log.Println("Backjumping:", index, kid)
-			}
-			continue
-		}
-
 		// Get versions
-		vs := vp.GetVersions(name)
+		vs = vp.GetVersions(name)
 		if verbose {
 			log.Printf("Versions: %s %v\n", name, vs)
-		}
-		if verbose {
 			log.Println("Iterating from:", version)
 		}
 		// Each version
@@ -148,7 +155,7 @@ func (g *depgraph) solve(vp versionProvider) bool {
 			for _, con := range curkid.d.Constraints {
 				if ver.Satisfies(con.Operator, con.Version) {
 					if verbose {
-						log.Println("Found a version to satisfy:", curkid.d, ver)
+						log.Println("Satisfactory Version:", curkid.d, ver)
 					}
 					curkid.v = ver
 				}
@@ -178,9 +185,16 @@ func (g *depgraph) solve(vp versionProvider) bool {
 				log.Printf("Activating: %s %v (%v, %v)\n",
 					curkid.d.Name, curkid.v, version, index)
 			}
-			active[name] = activation{[]uint64{
-				uint64(uint(kid)<<kidOffset | uint(index))}, curkid.v}
 
+			// Add save state info to activation
+			save := &savestate{
+				kid, version, index, current,
+				make([]stacknode, index+1),
+			}
+			copy(save.stack, stack)
+			active[name] = &activation{[]*savestate{save}, curkid.v}
+
+			// Pull in child dependencies on activation.
 			graphs := vp.GetGraphs(name)
 			found := false
 			for i := 0; i < len(graphs); i++ {
@@ -221,6 +235,7 @@ func (g *depgraph) solve(vp versionProvider) bool {
 				log.Println("Next kid:", kid)
 			}
 		}
+	CONTINUELOOP:
 	}
 
 	return false

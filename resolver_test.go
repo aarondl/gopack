@@ -190,7 +190,6 @@ func TestSolver_Backjumpheaven(t *T) {
 		t.Error(backjumpHeaven.String())
 	}
 
-
 	if !verifySolution(backjumpHeaven) {
 		t.Error("Solution could not be verified.")
 	}
