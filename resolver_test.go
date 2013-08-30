@@ -15,11 +15,11 @@ func init() {
 	}
 }
 
-type testVersionProvider struct {
+type testvp struct {
 	graphs map[string][]*depgraph
 }
 
-func (tvp *testVersionProvider) GetVersions(name string) (vs []*pack.Version) {
+func (tvp *testvp) GetVersions(name string) (vs []*pack.Version) {
 	if graphs, ok := tvp.graphs[name]; ok {
 		vs = make([]*pack.Version, len(graphs))
 		for i := 0; i < len(graphs); i++ {
@@ -29,8 +29,15 @@ func (tvp *testVersionProvider) GetVersions(name string) (vs []*pack.Version) {
 	return
 }
 
-func (tvp *testVersionProvider) GetGraphs(name string) []*depgraph {
-	return tvp.graphs[name]
+func (tvp *testvp) GetGraph(name string, version *pack.Version) *depgraph {
+	if graphs, ok := tvp.graphs[name]; ok {
+		for i := 0; i < len(graphs); i++ {
+			if graphs[i].head.v.Satisfies(pack.Equal, version) {
+				return graphs[i]
+			}
+		}
+	}
+	return nil
 }
 
 type testDepGraphProvider struct {
@@ -41,7 +48,7 @@ func (tdgp *testDepGraphProvider) GetGraph() *depgraph {
 	return tdgp.graph
 }
 
-var repository = testVersionProvider{map[string][]*depgraph{
+var repository = testvp{map[string][]*depgraph{
 	`apple`: []*depgraph{
 		mkGraph(
 			`apple 1.0.0`,
@@ -57,7 +64,7 @@ var repository = testVersionProvider{map[string][]*depgraph{
 		),
 		mkGraph(
 			`banana 0.0.1
-			-durian <0.0.5`,
+			-durian <=0.0.5`,
 		),
 	},
 	`carrot`: []*depgraph{
@@ -72,6 +79,9 @@ var repository = testVersionProvider{map[string][]*depgraph{
 	`durian`: []*depgraph{
 		mkGraph(`
 			durian 1.0.0
+		`),
+		mkGraph(`
+			durian 0.0.5
 		`),
 		mkGraph(`
 			durian 0.0.1
@@ -134,13 +144,14 @@ func TestSolver_Basic(t *T) {
 	-banana
 	`)
 
-	if !basic.solve(&repository) {
-		t.Error("Solution was not found.")
+	if err := basic.solve(&repository); err != nil {
+		t.Error("Solution was not found:", err)
 		t.Error(basic.String())
 	}
 
 	if !verifySolution(basic) {
 		t.Error("Solution could not be verified.")
+		t.Error(basic.String())
 	}
 }
 
@@ -151,13 +162,14 @@ func TestSolver_DepthFirst(t *T) {
 	-banana
 	`)
 
-	if !depthFirst.solve(&repository) {
-		t.Error("Solution was not found.")
+	if err := depthFirst.solve(&repository); err != nil {
+		t.Error("Solution was not found:", err)
 		t.Error(depthFirst.String())
 	}
 
 	if !verifySolution(depthFirst) {
 		t.Error("Solution could not be verified.")
+		t.Error(depthFirst.String())
 	}
 }
 
@@ -168,13 +180,32 @@ func TestSolver_Constraints(t *T) {
 	-banana >=0.0.2
 	`)
 
-	if !constraints.solve(&repository) {
-		t.Error("Solution was not found.")
+	if err := constraints.solve(&repository); err != nil {
+		t.Error("Solution was not found:", err)
 		t.Error(constraints.String())
 	}
 
 	if !verifySolution(constraints) {
 		t.Error("Solution could not be verified.")
+		t.Error(constraints.String())
+	}
+}
+
+func TestSolver_Backjump(t *T) {
+	var backjump = mkGraph(`
+	root 1.0.0
+	-apple 0.0.1
+	-banana 0.0.1
+	`)
+
+	if err := backjump.solve(&repository); err != nil {
+		t.Error("Solution was not found:", err)
+		t.Error(backjump.String())
+	}
+
+	if !verifySolution(backjump) {
+		t.Error("Solution could not be verified.")
+		t.Error(backjump.String())
 	}
 }
 
@@ -183,14 +214,16 @@ func TestSolver_Backjumpheaven(t *T) {
 	root 1.0.0
 	-apple 0.0.1
 	-banana 0.0.1
+	-carrot 0.0.1
 	`)
 
-	if !backjumpHeaven.solve(&repository) {
-		t.Error("Solution was not found.")
+	if err := backjumpHeaven.solve(&repository); err != nil {
+		t.Error("Solution was not found:", err)
 		t.Error(backjumpHeaven.String())
 	}
 
 	if !verifySolution(backjumpHeaven) {
 		t.Error("Solution could not be verified.")
+		t.Error(backjumpHeaven.String())
 	}
 }
