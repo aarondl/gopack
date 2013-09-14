@@ -13,6 +13,30 @@ const (
 	stackIndexMask   uint64 = 0xFFFFFFFF
 )
 
+// bitFilter is a type used to filter versions based on their index in an array
+// and an easy way to do cumulative versioning.
+type bitFilter uint64
+
+// Set sets a bit in the filter.
+func (b bitFilter) Set(index uint) bitFilter {
+	return bitFilter((1 << uint64(index)) | uint64(b))
+}
+
+// IsSet checks if a a bit in the filter is set.
+func (b bitFilter) IsSet(index uint) bool {
+	return 0 != ((1 << uint64(index)) & uint64(b))
+}
+
+// Clear turns off a bit in the filter.
+func (b bitFilter) Clear(index uint) bitFilter {
+	return bitFilter(^(1 << uint64(index)) & uint64(b))
+}
+
+// Add is the union of two bitFilters.
+func (b bitFilter) Add(a bitFilter) bitFilter {
+	return bitFilter(uint64(a) | uint64(b))
+}
+
 // versionProvider allows us to look up available versions for each package
 // the array returned must be in sorted order for the best result from the
 // solver as it assumes [0] is the latest version, and [1]... is less than that.
@@ -47,6 +71,7 @@ type activation struct {
 	name    string
 	version *pack.Version
 	states  []*savestate
+	filter  bitFilter
 }
 
 // String is used to debug activations.
@@ -81,6 +106,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 	var active *activation
 	var version *pack.Version
 	var vs []*pack.Version
+	var filter bitFilter
 	var ok bool
 	var verbose = true // Replace by flag.
 
@@ -101,6 +127,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 			}
 		}
 
+		// Skip Activation if we're on any child other than 0.
 		if kid != 0 {
 			goto NEXT
 		}
@@ -122,16 +149,14 @@ func (g *depgraph) solve(vp versionProvider) error {
 		}
 
 		// Weed out versions.
+		filter = 0
 		for j := 0; j < len(vs); j++ {
-			if vs[j] == nil {
-				continue
-			}
 			for _, con := range current.d.Constraints {
 				if !vs[j].Satisfies(con.Operator, con.Version) {
 					if verbose {
 						log.Println("Removing unacceptable version:", vs[j])
 					}
-					vs[j] = nil
+					filter.Set(uint(j))
 				}
 			}
 		}
@@ -145,82 +170,88 @@ func (g *depgraph) solve(vp versionProvider) error {
 			}
 		}
 
-		if verbose && active != nil {
-			log.Println("Found activation:", active)
-		}
-
-		// Find a suitable version
 		version = nil
-		for j := 0; version == nil && j < len(vs); j++ {
-			if vs[j] == nil {
-				continue
+		if active != nil {
+			if verbose {
+				log.Println("Found activation:", active)
 			}
-			if len(current.d.Constraints) == 0 {
-				version = vs[j]
-				break
-			}
+
 			for _, con := range current.d.Constraints {
-				if vs[j].Satisfies(con.Operator, con.Version) {
+				if !active.version.Satisfies(con.Operator, con.Version) {
+					// We've found a problem.
+					log.Printf("Conflict (%v): %v fails new constraint: %v%v",
+						name, active.version, con.Operator.String(),
+						con.Version)
+					return fmt.Errorf("Oh noes.")
+				}
+			}
+
+			// Check that we comply with the currently active.
+			active.states = append(active.states, &savestate{
+				kid:     kid,
+				version: 0, //Remove?
+				index:   si,
+				current: current,
+				stack:   nil,
+			})
+			active.filter = active.filter.Add(filter)
+		} else {
+			if verbose {
+				log.Println("Not activated:", name)
+			}
+			// Find a suitable version
+			for j := 0; version == nil && j < len(vs); j++ {
+				if active != nil && active.filter.IsSet(uint(j)) {
+					continue
+				}
+				if len(current.d.Constraints) == 0 {
 					version = vs[j]
 					break
 				}
+				for _, con := range current.d.Constraints {
+					if vs[j].Satisfies(con.Operator, con.Version) {
+						version = vs[j]
+						break
+					}
+				}
 			}
-		}
 
-		if version != nil {
-			if verbose {
-				log.Printf("Adding: %v %v to activations", name, version)
-			}
-			// Activate
-			if active == nil {
-				activations = append(activations, &activation{
-					name:    name,
-					version: version,
-					states: []*savestate{{
-						kid:     kid,
-						version: 0, //Remove?
-						index:   si,
-						current: current,
-						stack:   nil,
-					}},
-				})
-				current.v = version
-			} else {
-				active.states = append(active.states, &savestate{
+			activations = append(activations, &activation{
+				name:    name,
+				version: version,
+				filter:  filter,
+				states: []*savestate{{
 					kid:     kid,
 					version: 0, //Remove?
 					index:   si,
 					current: current,
 					stack:   nil,
-				})
-			}
+				}},
+			})
+			current.v = version
+		}
 
-			if verbose {
-				log.Println("Activations:", activations)
-			}
+		if verbose {
+			log.Printf("Added: %v %v to activations", name, version)
+			log.Println("Activations:", activations)
+		}
 
-			// Fetch dependencies for chosen version.
-			if verbose {
-				log.Println("Fetching Dependencies for:", name)
+		if verbose {
+			log.Println("Fetching Dependencies for:", name)
+		}
+
+		current.kids = vp.GetGraph(name, version).head.kids
+		if verbose {
+			var b bytes.Buffer
+			for _, dep := range current.kids {
+				b.WriteString(dep.d.String())
+				b.WriteRune(space)
 			}
-			curgraph := vp.GetGraph(name, version)
-			current.kids = curgraph.head.kids
-			if verbose {
-				var b bytes.Buffer
-				for _, dep := range current.kids {
-					b.WriteString(dep.d.String())
-					b.WriteRune(space)
-				}
-				log.Println("Got dependencies:", b.String())
-			}
-		} else {
-			// No suitable versions.
-			return fmt.Errorf("No suitable versions for: %v", current.d)
+			log.Println("Got dependencies:", b.String())
 		}
 
 		// Do the next node
 	NEXT:
-
 		// Pop off the stack back to parent.
 		if kid < len(current.kids) {
 			// Push us on to stack, go into child.
