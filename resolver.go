@@ -53,6 +53,7 @@ type versionProvider interface {
 type stacknode struct {
 	kid     int
 	version int
+	ai      int
 	current *depnode
 	parent  *depnode
 }
@@ -61,7 +62,8 @@ type stacknode struct {
 type savestate struct {
 	kid     int
 	version int
-	index   int
+	si      int
+	ai      int
 	current *depnode
 	stack   []stacknode
 }
@@ -70,7 +72,7 @@ type savestate struct {
 type activation struct {
 	name    string
 	version *pack.Version
-	states  []*savestate
+	state   *savestate
 	filter  bitFilter
 }
 
@@ -86,12 +88,8 @@ func (a activation) String() string {
 }
 
 /*
-solve a dependency graph.
-
-This algorithm is a depth first search with backjumping to resolve conflicts.
-
-Possible optimization: don't attempt a new version of a package unless it's
-dependencies have changed.
+solve a dependency graph. This algorithm is a depth first search with
+backjumping to resolve conflicts.
 */
 func (g *depgraph) solve(vp versionProvider) error {
 	if len(g.head.kids) == 0 {
@@ -100,17 +98,21 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 	var current, parent *depnode = g.head, nil
 	var stack = make([]stacknode, 0, initialStackSize) // Avoid allocations
-	var si, kid = -1, 0
+	var si, ai, kid = -1, -1, 0
 	var activations []*activation
-	var versions = make(map[string][]*pack.Version)
 	var active *activation
+	var versions = make(map[string][]*pack.Version)
 	var version *pack.Version
 	var vs []*pack.Version
+	var vi int
+	var noversions bool
 	var filter bitFilter
 	var ok bool
+	var conflicts = make([]string, 0)
+
 	var verbose = true // Replace by flag.
 
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		name := current.d.Name
 		if verbose {
 			log.Println("Current:", current.d)
@@ -120,6 +122,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 			if kid >= len(current.kids) {
 				if verbose {
 					log.Println("Success!")
+					log.Println(activations)
 				}
 				return nil
 			} else {
@@ -150,6 +153,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 		// Weed out versions.
 		filter = 0
+		noversions = true
 		for j := 0; j < len(vs); j++ {
 			for _, con := range current.d.Constraints {
 				if !vs[j].Satisfies(con.Operator, con.Version) {
@@ -157,11 +161,23 @@ func (g *depgraph) solve(vp versionProvider) error {
 						log.Println("Removing unacceptable version:", vs[j])
 					}
 					filter.Set(uint(j))
+				} else {
+					noversions = false
 				}
 			}
 		}
 
-		// Check for activeness.
+		if noversions {
+			if parent == g.head {
+				return fmt.Errorf("No versions to satisfy root dependency: %v", current.d)
+			} else {
+				// Jump up the stack, conflict, something!
+				return fmt.Errorf("No versions satisfy: %v", current.d)
+			}
+		}
+
+		// Check for activeness. The first activation will always serve as the
+		// main activation point, with the others simply being save points.
 		active = nil
 		for j := 0; j < len(activations); j++ {
 			if activations[j].name == name {
@@ -171,65 +187,97 @@ func (g *depgraph) solve(vp versionProvider) error {
 		}
 
 		version = nil
+		noversions = false
 		if active != nil {
 			if verbose {
 				log.Println("Found activation:", active)
 			}
 
+			// Check that we comply with the currently active.
 			for _, con := range current.d.Constraints {
 				if !active.version.Satisfies(con.Operator, con.Version) {
 					// We've found a problem.
 					log.Printf("Conflict (%v): %v fails new constraint: %v%v",
 						name, active.version, con.Operator.String(),
 						con.Version)
-					return fmt.Errorf("Oh noes.")
+
+					conflicts = append(conflicts, name)
 				}
 			}
 
-			// Check that we comply with the currently active.
-			active.states = append(active.states, &savestate{
-				kid:     kid,
-				version: 0, //Remove?
-				index:   si,
-				current: current,
-				stack:   nil,
-			})
+			// If there's a conflict
+			if len(conflicts) > 0 {
+				if parent == g.head {
+					return fmt.Errorf("Reached the top of the stack!")
+				}
+
+				// We can still climb the stack, try it.
+				sn := stack[si]
+				parent = sn.parent
+				current = sn.current
+				if verbose {
+					log.Println("Popping:", current.d.Name)
+				}
+				ai = sn.ai
+				vi = sn.version
+				kid = 0
+				stack = stack[:len(stack)-1]
+				si--
+				vi++
+				if verbose {
+					log.Println(activations)
+					log.Println(activations[:ai])
+					log.Println("Snipping activations back to:", ai) // TODO: REMOVE
+				}
+				activations = activations[:ai]
+				continue
+			}
+
+			// Add the current filter to the primary activation.
 			active.filter = active.filter.Add(filter)
 		} else {
 			if verbose {
 				log.Println("Not activated:", name)
 			}
 			// Find a suitable version
-			for j := 0; version == nil && j < len(vs); j++ {
-				if active != nil && active.filter.IsSet(uint(j)) {
+			for ; version == nil && vi < len(vs); vi++ {
+				if active != nil && active.filter.IsSet(uint(vi)) {
 					continue
 				}
 				if len(current.d.Constraints) == 0 {
-					version = vs[j]
+					version = vs[vi]
 					break
 				}
 				for _, con := range current.d.Constraints {
-					if vs[j].Satisfies(con.Operator, con.Version) {
-						version = vs[j]
+					if vs[vi].Satisfies(con.Operator, con.Version) {
+						version = vs[vi]
 						break
 					}
 				}
 			}
 
-			activations = append(activations, &activation{
-				name:    name,
-				version: version,
-				filter:  filter,
-				states: []*savestate{{
-					kid:     kid,
-					version: 0, //Remove?
-					index:   si,
-					current: current,
-					stack:   nil,
-				}},
-			})
-			current.v = version
+			if version == nil {
+				// No version could be found, this is a conflict of sorts.
+				return fmt.Errorf("No versions could be found for: %v", current.d)
+			}
 		}
+
+		// Add ourselves to the list of activators.
+		activations = append(activations, &activation{
+			name:    name,
+			version: version,
+			filter:  filter,
+			state: &savestate{
+				kid:     kid,
+				version: vi,
+				si:      si,
+				ai:      ai,
+				current: current,
+				stack:   nil,
+			},
+		})
+		ai++
+		current.v = version
 
 		if verbose {
 			log.Printf("Added: %v %v to activations", name, version)
@@ -250,27 +298,29 @@ func (g *depgraph) solve(vp versionProvider) error {
 			log.Println("Got dependencies:", b.String())
 		}
 
-		// Do the next node
 	NEXT:
-		// Pop off the stack back to parent.
+		// Push current on to stack, go into child.
 		if kid < len(current.kids) {
-			// Push us on to stack, go into child.
 			if verbose {
 				log.Println("Pushing:", name, kid)
 			}
 			stack = append(stack, stacknode{
 				kid:     kid,
-				version: 0, //remove?
+				version: vi,
+				ai:      ai,
 				current: current,
 				parent:  parent,
 			})
 			parent = current
 			current = current.kids[kid]
+			ai = len(activations) - 1
 			kid = 0
+			vi = 0
 			si++
 			continue
 		}
 
+		// Pop off the stack back to parent.
 		sn := stack[si]
 		parent = sn.parent
 		current = sn.current
@@ -278,8 +328,10 @@ func (g *depgraph) solve(vp versionProvider) error {
 			log.Println("Popping:", current.d.Name)
 		}
 		kid = sn.kid
-		kid++
+		vi = sn.version
+		ai = sn.ai
 		stack = stack[:len(stack)-1]
+		kid++
 		si--
 
 		// Try activating:
