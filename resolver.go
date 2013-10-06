@@ -14,7 +14,6 @@ const (
 )
 
 // bitFilter is a type used to filter versions based on their index in an array
-// and an easy way to do cumulative versioning.
 type bitFilter uint64
 
 // Set sets a bit in the filter.
@@ -38,14 +37,13 @@ func (b bitFilter) Add(a bitFilter) bitFilter {
 }
 
 // versionProvider allows us to look up available versions for each package
-// the array returned must be in sorted order for the best result from the
-// solver as it assumes [0] is the latest version, and [1]... is less than that.
-//
-// GetVersions: Get the versions only from the dependency information.
-// GetGraphs: Get a list of graphs showing dependency information for each
-// version of the package.
+// the array returned must be in reverse sorted order for the best result from
+// the solver as it assumes [0] > [1] > [2]...
 type versionProvider interface {
+	// GetVersions gets the versions only from the dependency information.
 	GetVersions(string) []*pack.Version
+	// GetGraphs gets a list of graphs showing dependency information for each
+	// version of the package.
 	GetGraph(string, *pack.Version) *depgraph
 }
 
@@ -112,7 +110,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 	var conflicts = make([]string, 0)
 	var conflict bool
 
-	var verbose = true // Replace by flag.
+	var verbose = false // Replace by flag.
 
 	for i := 0; i < 20; i++ {
 		name := current.d.Name
@@ -194,9 +192,11 @@ func (g *depgraph) solve(vp versionProvider) error {
 			for _, con := range current.d.Constraints {
 				if !active.version.Satisfies(con.Operator, con.Version) {
 					// We've found a problem.
-					log.Printf("Conflict (%v): %v fails new constraint: %v%v",
-						name, active.version, con.Operator.String(),
-						con.Version)
+					if verbose {
+						log.Printf("Conflict (%v): %v fails constraint: %v%v",
+							name, active.version, con.Operator.String(),
+							con.Version)
+					}
 
 					conflict = true
 					break
