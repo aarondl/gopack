@@ -65,6 +65,7 @@ type savestate struct {
 	si      int
 	ai      int
 	current *depnode
+	parent  *depnode
 	stack   []stacknode
 }
 
@@ -105,10 +106,11 @@ func (g *depgraph) solve(vp versionProvider) error {
 	var version *pack.Version
 	var vs []*pack.Version
 	var vi int
-	var noversions bool
 	var filter bitFilter
+	var excluded int
 	var ok bool
 	var conflicts = make([]string, 0)
+	var conflict bool
 
 	var verbose = true // Replace by flag.
 
@@ -153,7 +155,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 		// Weed out versions.
 		filter = 0
-		noversions = true
+		excluded = 0
 		for j := 0; j < len(vs); j++ {
 			for _, con := range current.d.Constraints {
 				if !vs[j].Satisfies(con.Operator, con.Version) {
@@ -161,19 +163,14 @@ func (g *depgraph) solve(vp versionProvider) error {
 						log.Println("Removing unacceptable version:", vs[j])
 					}
 					filter.Set(uint(j))
-				} else {
-					noversions = false
+					excluded++
 				}
 			}
 		}
 
-		if noversions {
-			if parent == g.head {
-				return fmt.Errorf("No versions to satisfy root dependency: %v", current.d)
-			} else {
-				// Jump up the stack, conflict, something!
-				return fmt.Errorf("No versions satisfy: %v", current.d)
-			}
+		if parent == g.head && len(vs) == excluded {
+			return fmt.Errorf("No versions to satisfy root dependency: %v",
+				current.d)
 		}
 
 		// Check for activeness. The first activation will always serve as the
@@ -187,7 +184,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 		}
 
 		version = nil
-		noversions = false
+		conflict = false
 		if active != nil {
 			if verbose {
 				log.Println("Found activation:", active)
@@ -201,39 +198,12 @@ func (g *depgraph) solve(vp versionProvider) error {
 						name, active.version, con.Operator.String(),
 						con.Version)
 
-					conflicts = append(conflicts, name)
+					conflict = true
 				}
-			}
-
-			// If there's a conflict
-			if len(conflicts) > 0 {
-				if parent == g.head {
-					return fmt.Errorf("Reached the top of the stack!")
-				}
-
-				// We can still climb the stack, try it.
-				sn := stack[si]
-				parent = sn.parent
-				current = sn.current
-				if verbose {
-					log.Println("Popping:", current.d.Name)
-				}
-				ai = sn.ai
-				vi = sn.version
-				kid = 0
-				stack = stack[:len(stack)-1]
-				si--
-				vi++
-				if verbose {
-					log.Println(activations)
-					log.Println(activations[:ai])
-					log.Println("Snipping activations back to:", ai) // TODO: REMOVE
-				}
-				activations = activations[:ai]
-				continue
 			}
 
 			// Add the current filter to the primary activation.
+			version = active.version
 			active.filter = active.filter.Add(filter)
 		} else {
 			if verbose {
@@ -257,12 +227,80 @@ func (g *depgraph) solve(vp versionProvider) error {
 			}
 
 			if version == nil {
+				if verbose {
+					log.Printf("Conflict (%v): has no usable versions %v", name, vs)
+				}
 				// No version could be found, this is a conflict of sorts.
-				return fmt.Errorf("No versions could be found for: %v", current.d)
+				conflict = true
 			}
 		}
 
+		// If there's a conflict
+		if conflict {
+			conflicts = append(conflicts, name)
+			// If we cannot climb the stack any further, go back to a save
+			// point if one exists.
+			if parent == g.head {
+				if len(conflicts) == 0 {
+					// No conflicts exist to jump back to.
+					return fmt.Errorf("We've tried everything mate: %v", conflicts)
+				}
+				name = conflicts[0]
+				conflicts = conflicts[1:]
+				var st *savestate
+				for i := 0; i < len(activations); i++ {
+					if activations[i].name == name {
+						st = activations[i].state
+						break
+					}
+				}
+				if st == nil {
+					return fmt.Errorf("Failed to find an activation of a conflict (%v)? %v", name, activations)
+				}
+				current = st.current
+				parent = st.parent
+				if verbose {
+					log.Println("Conflict! Restoring:", current.d.Name)
+				}
+				ai = st.ai
+				vi = st.version
+				vi++
+				stack = st.stack
+				si = st.si
+				kid = 0
+				if verbose {
+					log.Println(activations)
+					log.Println(activations[:ai])
+					log.Println("Snipping activations back to:", ai) // TODO: REMOVE
+				}
+				activations = activations[:ai]
+				continue
+			}
+
+			// We can still climb the stack, try it.
+			sn := stack[si]
+			parent = sn.parent
+			current = sn.current
+			if verbose {
+				log.Println("Conflict! Popping:", current.d.Name)
+			}
+			ai = sn.ai
+			vi = sn.version
+			vi++
+			stack = stack[:len(stack)-1]
+			si--
+			kid = 0
+			if verbose {
+				log.Println(activations)
+				log.Println(activations[:ai])
+				log.Println("Snipping activations back to:", ai) // TODO: REMOVE
+			}
+			activations = activations[:ai]
+			continue
+		}
+
 		// Add ourselves to the list of activators.
+		ai++
 		activations = append(activations, &activation{
 			name:    name,
 			version: version,
@@ -273,10 +311,11 @@ func (g *depgraph) solve(vp versionProvider) error {
 				si:      si,
 				ai:      ai,
 				current: current,
-				stack:   nil,
+				parent:  parent,
+				stack:   make([]stacknode, len(stack)),
 			},
 		})
-		ai++
+		copy(activations[len(activations)-1].state.stack, stack)
 		current.v = version
 
 		if verbose {
