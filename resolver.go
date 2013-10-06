@@ -199,6 +199,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 						con.Version)
 
 					conflict = true
+					break
 				}
 			}
 
@@ -228,14 +229,14 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 			if version == nil {
 				if verbose {
-					log.Printf("Conflict (%v): has no usable versions %v", name, vs)
+					log.Printf("Conflict (%v): has no usable versions %v",
+						name, vs)
 				}
 				// No version could be found, this is a conflict of sorts.
 				conflict = true
 			}
 		}
 
-		// If there's a conflict
 		if conflict {
 			conflicts = append(conflicts, name)
 			// If we cannot climb the stack any further, go back to a save
@@ -243,7 +244,8 @@ func (g *depgraph) solve(vp versionProvider) error {
 			if parent == g.head {
 				if len(conflicts) == 0 {
 					// No conflicts exist to jump back to.
-					return fmt.Errorf("We've tried everything mate: %v", conflicts)
+					return fmt.Errorf("We've tried everything mate: %v",
+						conflicts)
 				}
 				name = conflicts[0]
 				conflicts = conflicts[1:]
@@ -255,7 +257,8 @@ func (g *depgraph) solve(vp versionProvider) error {
 					}
 				}
 				if st == nil {
-					return fmt.Errorf("Failed to find an activation of a conflict (%v)? %v", name, activations)
+					return fmt.Errorf("Conflict's activation not found: %v %v",
+						name, activations)
 				}
 				current = st.current
 				parent = st.parent
@@ -268,12 +271,10 @@ func (g *depgraph) solve(vp versionProvider) error {
 				stack = st.stack
 				si = st.si
 				kid = 0
-				if verbose {
-					log.Println(activations)
-					log.Println(activations[:ai])
-					log.Println("Snipping activations back to:", ai) // TODO: REMOVE
-				}
 				activations = activations[:ai]
+				if verbose {
+					log.Println("Activations:", activations)
+				}
 				continue
 			}
 
@@ -290,12 +291,10 @@ func (g *depgraph) solve(vp versionProvider) error {
 			stack = stack[:len(stack)-1]
 			si--
 			kid = 0
-			if verbose {
-				log.Println(activations)
-				log.Println(activations[:ai])
-				log.Println("Snipping activations back to:", ai) // TODO: REMOVE
-			}
 			activations = activations[:ai]
+			if verbose {
+				log.Println("Activations:", activations)
+			}
 			continue
 		}
 
@@ -372,215 +371,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 		stack = stack[:len(stack)-1]
 		kid++
 		si--
-
-		// Try activating:
-		// If activated:
-		//  If conflict:
-		//    backjump to first activated parent?
-		// Else:
-		//  Create activation with list of versions/dependencies.
-		// Remove non-compatible versions with the current node.
-		// Choose highest version as current activated.
 	}
 
 	return nil
 }
-
-/*
-	var verbose = true // Move to flag
-
-	var stack = make([]stacknode, 0, initialStackSize) // Avoid allocations
-	var index = 0
-	var kid, version int
-	var backjump *savestate
-	var current *depnode
-	var vs []*pack.Version
-	var active = make(map[string]*activation)
-
-	current = g.head
-
-	for i := 0; i < 40; i++ {
-		if verbose {
-			log.Printf("Eval: %s (%v, %v)\n", current.d.Name, kid, version)
-		}
-
-		// Have we run out of dependencies to resolve?
-		if kid >= len(current.kids) {
-			if verbose {
-				log.Println("Ran out of children...")
-			}
-			// Jump up stack.
-			if index > 0 {
-				index--
-				current = stack[index].depnode
-				//version = stack[index].version
-				stack[index].kid++
-				kid = stack[index].kid
-				if verbose {
-					log.Printf("Pop: %s (%v, %v)\n", current.d.Name,
-						kid, version)
-				}
-				continue
-			}
-			if verbose {
-				log.Println("Nothing left to do, should be solved.")
-			}
-			// We did it!!!!
-			return true
-		}
-
-		// Try to activate child
-		curkid := current.kids[kid]
-		name := curkid.d.Name
-		log.Println("Attempting child activation:", name)
-
-		// Check if already activated
-		if act, ok := active[name]; ok && act.v != nil {
-			var found bool
-			for _, con := range curkid.d.Constraints {
-				if act.v.Satisfies(con.Operator, con.Version) {
-					found = true
-					break
-				}
-			}
-
-			if found {
-				// Add ourselves to the activators list.
-				save := &savestate{
-					kid, version, index, current,
-					make([]stacknode, index+1),
-				}
-				copy(save.stack, stack)
-				act.states = append(act.states, save)
-
-				if verbose {
-					log.Println(name, "satisfied by previous activation:",
-						act.v, act.states)
-				}
-			} else {
-				// Backjump
-				backjump = act.states[len(act.states)-1]
-				if verbose {
-					log.Printf("Found conflict: %s (%v)\n", name, act.v)
-					log.Print("Previous states: ")
-					for _, a := range act.states {
-						log.Printf("%v ", a)
-					}
-				}
-				act.states = act.states[:len(act.states)-1]
-				act.v = nil
-
-				current, kid, version, index = backjump.current,
-					backjump.kid, backjump.version, backjump.index
-				copy(stack, backjump.stack)
-				if verbose {
-					log.Println("Backjumping:", index, kid)
-				}
-				version++
-				continue
-			}
-		}
-
-		// Get versions
-		vs = vp.GetVersions(name)
-		if verbose {
-			log.Printf("Versions: %s %v\n", name, vs)
-			log.Println("Iterating from:", version)
-		}
-		// Each version
-		for ; version < len(vs); version++ {
-			// Each constraint
-			ver := vs[version]
-			for _, con := range curkid.d.Constraints {
-				if ver.Satisfies(con.Operator, con.Version) {
-					if verbose {
-						log.Println("Satisfactory Version:", curkid.d, ver)
-					}
-					curkid.v = ver
-				}
-				if curkid.v != nil {
-					log.Println("No need for more constraint checks... Breaking.")
-					break
-				}
-			}
-			if len(curkid.d.Constraints) == 0 {
-				curkid.v = ver
-			}
-			if curkid.v != nil {
-				log.Println("No need to check more versions... Breaking")
-				break
-			}
-		}
-
-		if curkid.v == nil {
-			// No version found to satisfy.
-			if verbose {
-				log.Println("No versions available to satisfy:", curkid.d)
-			}
-			return false
-		} else {
-			// Activate
-			if verbose {
-				log.Printf("Activating: %s %v (%v, %v)\n",
-					curkid.d.Name, curkid.v, version, index)
-			}
-
-			// Add save state info to activation
-			save := &savestate{
-				kid, version, index, current,
-				make([]stacknode, index+1),
-			}
-			copy(save.stack, stack)
-
-			if act, ok := active[name]; ok {
-				act.states = []*savestate{save}
-				act.v = curkid.v
-			} else {
-				active[name] = &activation{[]*savestate{save}, curkid.v}
-			}
-
-			// Pull in child dependencies on activation.
-			graphs := vp.GetGraphs(name)
-			found := false
-			for i := 0; i < len(graphs); i++ {
-				if graphs[i].head.v.Satisfies(pack.Equal, curkid.v) {
-					found = true
-					curkid.kids = graphs[i].head.kids
-					if verbose {
-						log.Println("Setting kids:", len(curkid.kids))
-					}
-					break
-				}
-			}
-
-			if !found {
-				if verbose {
-					log.Println("Dependency graph missing for: %v %v",
-						curkid.d.Name, curkid.v)
-				}
-				return false
-			}
-		}
-
-		if len(curkid.kids) > 0 {
-			// Push current on to stack, make the curkid the new current.
-			if verbose {
-				log.Println("Has kids:", len(curkid.kids))
-				log.Printf("Push: %s (%v, %v)\n", current.d.Name, kid, version)
-			}
-			stack = append(stack, stacknode{kid, version, current})
-			kid = 0
-			version = 0
-			current = curkid
-			index++
-		} else {
-			// Continue through all kids.
-			kid++
-			if verbose {
-				log.Println("Next kid:", kid)
-			}
-		}
-	}
-
-	return false
-}*/
