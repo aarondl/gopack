@@ -110,9 +110,9 @@ func (g *depgraph) solve(vp versionProvider) error {
 	var conflicts = make([]string, 0)
 	var conflict bool
 
-	var verbose = false // Replace by flag.
+	var verbose = *DEBUG
 
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 100; i++ {
 		name := current.d.Name
 		if verbose {
 			log.Println("Current:", current.d)
