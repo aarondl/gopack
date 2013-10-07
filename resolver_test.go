@@ -98,22 +98,6 @@ var repository = testvp{map[string][]*depgraph{
 	},
 }}
 
-/*var basic = mkTree(`
-root 1.0.0
--apple
--banana 0.0.1
-`)*/
-
-/*var backjumpHeaven = mkTree(`
-root 1.0.0
--apple
---durian >=0.0.1
--banana
---durian <1.0.1
--carrot
---durian =0.0.1
-`)*/
-
 func verifySolution(d *depgraph) bool {
 	for _, kid := range d.head.kids {
 		if !verifySolutionHelper(kid) {
@@ -137,6 +121,25 @@ func verifySolutionHelper(d *depnode) bool {
 	return true
 }
 
+func verifyDeps(deps map[string]*pack.Version, expdeps ...string) bool {
+	if len(deps) != len(expdeps) {
+		return false
+	}
+
+	for _, dep := range expdeps {
+		d, err := pack.ParseDependency(dep)
+		if err != nil {
+			panic("Check input to this function carefully.")
+		}
+		if v, ok := deps[d.Name]; !ok ||
+			!v.Satisfies(pack.Equal, d.Constraints[0].Version) {
+
+			return false
+		}
+	}
+	return true
+}
+
 func TestSolver_Basic(t *T) {
 	var basic = mkGraph(`
 	root 1.0.0
@@ -144,9 +147,17 @@ func TestSolver_Basic(t *T) {
 	-banana
 	`)
 
-	if _, err := basic.solve(&repository); err != nil {
+	var err error
+	var deps map[string]*pack.Version
+	if deps, err = basic.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(basic.String())
+	}
+
+	expdeps := []string{`apple 1.0.0`, `banana 1.0.0`}
+	if !verifyDeps(deps, expdeps...) {
+		t.Error("Expected dependencies were not resolved:", expdeps)
+		t.Error(deps)
 	}
 
 	if !verifySolution(basic) {
@@ -162,9 +173,17 @@ func TestSolver_DepthFirst(t *T) {
 	-banana
 	`)
 
-	if _, err := depthFirst.solve(&repository); err != nil {
+	var err error
+	var deps map[string]*pack.Version
+	if deps, err = depthFirst.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(depthFirst.String())
+	}
+
+	expdeps := []string{`eggplant 1.0.0`, `banana 1.0.0`, `durian 1.0.0`}
+	if !verifyDeps(deps, expdeps...) {
+		t.Error("Expected dependencies were not resolved:", expdeps)
+		t.Error(deps)
 	}
 
 	if !verifySolution(depthFirst) {
@@ -180,9 +199,17 @@ func TestSolver_Constraints(t *T) {
 	-banana >=0.0.2
 	`)
 
-	if _, err := constraints.solve(&repository); err != nil {
+	var err error
+	var deps map[string]*pack.Version
+	if deps, err = constraints.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(constraints.String())
+	}
+
+	expdeps := []string{`apple 1.0.0`, `banana 1.0.0`}
+	if !verifyDeps(deps, expdeps...) {
+		t.Error("Expected dependencies were not resolved:", expdeps)
+		t.Error(deps)
 	}
 
 	if !verifySolution(constraints) {
@@ -198,9 +225,17 @@ func TestSolver_Backjump(t *T) {
 	-banana 0.0.1
 	`)
 
-	if _, err := backjump.solve(&repository); err != nil {
+	var err error
+	var deps map[string]*pack.Version
+	if deps, err = backjump.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(backjump.String())
+	}
+
+	expdeps := []string{`apple 0.0.1`, `banana 0.0.1`, `durian 0.0.1`}
+	if !verifyDeps(deps, expdeps...) {
+		t.Error("Expected dependencies were not resolved:", expdeps)
+		t.Error(deps)
 	}
 
 	if !verifySolution(backjump) {
@@ -217,9 +252,19 @@ func TestSolver_Backjumpheaven(t *T) {
 	-carrot 0.0.1
 	`)
 
-	if _, err := backjumpHeaven.solve(&repository); err != nil {
+	var err error
+	var deps map[string]*pack.Version
+	if deps, err = backjumpHeaven.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(backjumpHeaven.String())
+	}
+
+	expdeps := []string{
+		`apple 0.0.1`, `banana 0.0.1`, `carrot 0.0.1`, `durian 0.0.1`,
+	}
+	if !verifyDeps(deps, expdeps...) {
+		t.Error("Expected dependencies were not resolved:", expdeps)
+		t.Error(deps)
 	}
 
 	if !verifySolution(backjumpHeaven) {

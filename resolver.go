@@ -244,8 +244,8 @@ func (g *depgraph) solve(vp versionProvider) (map[string]*pack.Version, error) {
 			&activation{name, version, &savestate{
 				&stacknode{kid, vi, ai, current, parent},
 				make([]stacknode, len(stack)),
-			},
-		})
+			}},
+		)
 		copy(activations[len(activations)-1].state.stack, stack)
 		current.v = version
 
