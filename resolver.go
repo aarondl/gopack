@@ -13,29 +13,6 @@ const (
 	stackIndexMask   uint64 = 0xFFFFFFFF
 )
 
-// bitFilter is a type used to filter versions based on their index in an array
-type bitFilter uint64
-
-// Set sets a bit in the filter.
-func (b bitFilter) Set(index uint) bitFilter {
-	return bitFilter((1 << uint64(index)) | uint64(b))
-}
-
-// IsSet checks if a a bit in the filter is set.
-func (b bitFilter) IsSet(index uint) bool {
-	return 0 != ((1 << uint64(index)) & uint64(b))
-}
-
-// Clear turns off a bit in the filter.
-func (b bitFilter) Clear(index uint) bitFilter {
-	return bitFilter(^(1 << uint64(index)) & uint64(b))
-}
-
-// Add is the union of two bitFilters.
-func (b bitFilter) Add(a bitFilter) bitFilter {
-	return bitFilter(uint64(a) | uint64(b))
-}
-
 // versionProvider allows us to look up available versions for each package
 // the array returned must be in reverse sorted order for the best result from
 // the solver as it assumes [0] > [1] > [2]...
@@ -60,7 +37,6 @@ type stacknode struct {
 type savestate struct {
 	kid     int
 	version int
-	si      int
 	ai      int
 	current *depnode
 	parent  *depnode
@@ -72,7 +48,6 @@ type activation struct {
 	name    string
 	version *pack.Version
 	state   *savestate
-	filter  bitFilter
 }
 
 // String is used to debug activations.
@@ -97,15 +72,13 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 	var current, parent *depnode = g.head, nil
 	var stack = make([]stacknode, 0, initialStackSize) // Avoid allocations
-	var si, ai, kid = -1, -1, 0
+	var ai, kid = -1, 0
 	var activations []*activation
 	var active *activation
 	var versions = make(map[string][]*pack.Version)
 	var version *pack.Version
 	var vs []*pack.Version
 	var vi int
-	var filter bitFilter
-	var excluded int
 	var ok bool
 	var conflicts = make([]string, 0)
 	var conflict bool
@@ -118,6 +91,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 			log.Println("Current:", current.d)
 		}
 
+		// Don't process head.
 		if current == g.head {
 			if kid >= len(current.kids) {
 				if verbose {
@@ -151,26 +125,6 @@ func (g *depgraph) solve(vp versionProvider) error {
 			log.Println("Versions:", vs)
 		}
 
-		// Weed out versions.
-		filter = 0
-		excluded = 0
-		for j := 0; j < len(vs); j++ {
-			for _, con := range current.d.Constraints {
-				if !vs[j].Satisfies(con.Operator, con.Version) {
-					if verbose {
-						log.Println("Removing unacceptable version:", vs[j])
-					}
-					filter.Set(uint(j))
-					excluded++
-				}
-			}
-		}
-
-		if parent == g.head && len(vs) == excluded {
-			return fmt.Errorf("No versions to satisfy root dependency: %v",
-				current.d)
-		}
-
 		// Check for activeness. The first activation will always serve as the
 		// main activation point, with the others simply being save points.
 		active = nil
@@ -193,9 +147,8 @@ func (g *depgraph) solve(vp versionProvider) error {
 				if !active.version.Satisfies(con.Operator, con.Version) {
 					// We've found a problem.
 					if verbose {
-						log.Printf("Conflict (%v): %v fails constraint: %v%v",
-							name, active.version, con.Operator.String(),
-							con.Version)
+						log.Printf("Conflict: %v %v fails constraint: %v%v",
+							name, active.version, con.Operator, con.Version)
 					}
 
 					conflict = true
@@ -203,18 +156,13 @@ func (g *depgraph) solve(vp versionProvider) error {
 				}
 			}
 
-			// Add the current filter to the primary activation.
 			version = active.version
-			active.filter = active.filter.Add(filter)
 		} else {
 			if verbose {
 				log.Println("Not activated:", name)
 			}
 			// Find a suitable version
 			for ; version == nil && vi < len(vs); vi++ {
-				if active != nil && active.filter.IsSet(uint(vi)) {
-					continue
-				}
 				if len(current.d.Constraints) == 0 {
 					version = vs[vi]
 					break
@@ -229,10 +177,9 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 			if version == nil {
 				if verbose {
-					log.Printf("Conflict (%v): has no usable versions %v",
+					log.Printf("Conflict: %v has no usable versions %v",
 						name, vs)
 				}
-				// No version could be found, this is a conflict of sorts.
 				conflict = true
 			}
 		}
@@ -269,7 +216,6 @@ func (g *depgraph) solve(vp versionProvider) error {
 				vi = st.version
 				vi++
 				stack = st.stack
-				si = st.si
 				kid = 0
 				activations = activations[:ai]
 				if verbose {
@@ -279,7 +225,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 			}
 
 			// We can still climb the stack, try it.
-			sn := stack[si]
+			sn := stack[len(stack)-1]
 			parent = sn.parent
 			current = sn.current
 			if verbose {
@@ -289,7 +235,6 @@ func (g *depgraph) solve(vp versionProvider) error {
 			vi = sn.version
 			vi++
 			stack = stack[:len(stack)-1]
-			si--
 			kid = 0
 			activations = activations[:ai]
 			if verbose {
@@ -303,11 +248,9 @@ func (g *depgraph) solve(vp versionProvider) error {
 		activations = append(activations, &activation{
 			name:    name,
 			version: version,
-			filter:  filter,
 			state: &savestate{
 				kid:     kid,
 				version: vi,
-				si:      si,
 				ai:      ai,
 				current: current,
 				parent:  parent,
@@ -354,12 +297,11 @@ func (g *depgraph) solve(vp versionProvider) error {
 			ai = len(activations) - 1
 			kid = 0
 			vi = 0
-			si++
 			continue
 		}
 
 		// Pop off the stack back to parent.
-		sn := stack[si]
+		sn := stack[len(stack)-1]
 		parent = sn.parent
 		current = sn.current
 		if verbose {
@@ -370,7 +312,6 @@ func (g *depgraph) solve(vp versionProvider) error {
 		ai = sn.ai
 		stack = stack[:len(stack)-1]
 		kid++
-		si--
 	}
 
 	return nil
