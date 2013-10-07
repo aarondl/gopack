@@ -144,7 +144,7 @@ func TestSolver_Basic(t *T) {
 	-banana
 	`)
 
-	if err := basic.solve(&repository); err != nil {
+	if _, err := basic.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(basic.String())
 	}
@@ -162,7 +162,7 @@ func TestSolver_DepthFirst(t *T) {
 	-banana
 	`)
 
-	if err := depthFirst.solve(&repository); err != nil {
+	if _, err := depthFirst.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(depthFirst.String())
 	}
@@ -180,7 +180,7 @@ func TestSolver_Constraints(t *T) {
 	-banana >=0.0.2
 	`)
 
-	if err := constraints.solve(&repository); err != nil {
+	if _, err := constraints.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(constraints.String())
 	}
@@ -198,7 +198,7 @@ func TestSolver_Backjump(t *T) {
 	-banana 0.0.1
 	`)
 
-	if err := backjump.solve(&repository); err != nil {
+	if _, err := backjump.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(backjump.String())
 	}
@@ -217,7 +217,7 @@ func TestSolver_Backjumpheaven(t *T) {
 	-carrot 0.0.1
 	`)
 
-	if err := backjumpHeaven.solve(&repository); err != nil {
+	if _, err := backjumpHeaven.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(backjumpHeaven.String())
 	}

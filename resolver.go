@@ -27,7 +27,7 @@ type versionProvider interface {
 // stacknode helps to emulate recursion and perform safejumps.
 type stacknode struct {
 	kid     int
-	version int
+	vi      int
 	ai      int
 	current *depnode
 	parent  *depnode
@@ -35,12 +35,8 @@ type stacknode struct {
 
 // savestate is the state of the algorithm at an activation point.
 type savestate struct {
-	kid     int
-	version int
-	ai      int
-	current *depnode
-	parent  *depnode
-	stack   []stacknode
+	*stacknode
+	stack []stacknode
 }
 
 // activation is the details of a packages activation.
@@ -65,13 +61,13 @@ func (a activation) String() string {
 solve a dependency graph. This algorithm is a depth first search with
 backjumping to resolve conflicts.
 */
-func (g *depgraph) solve(vp versionProvider) error {
+func (g *depgraph) solve(vp versionProvider) (map[string]*pack.Version, error) {
 	if len(g.head.kids) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var current, parent *depnode = g.head, nil
-	var stack = make([]stacknode, 0, initialStackSize) // Avoid allocations
+	var stack = make([]stacknode, 0, initialStackSize)
 	var ai, kid = -1, 0
 	var activations []*activation
 	var active *activation
@@ -85,6 +81,15 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 	var verbose = *DEBUG
 
+	// setState is used to climb the stack, or restore a savestate
+	var setState = func(sn *stacknode) {
+		kid = sn.kid
+		vi = sn.vi
+		ai = sn.ai
+		current = sn.current
+		parent = sn.parent
+	}
+
 	for i := 0; i < 100; i++ {
 		name := current.d.Name
 		if verbose {
@@ -96,9 +101,8 @@ func (g *depgraph) solve(vp versionProvider) error {
 			if kid >= len(current.kids) {
 				if verbose {
 					log.Println("Success!")
-					log.Println(activations)
 				}
-				return nil
+				break
 			} else {
 				goto NEXT
 			}
@@ -191,7 +195,7 @@ func (g *depgraph) solve(vp versionProvider) error {
 			if parent == g.head {
 				if len(conflicts) == 0 {
 					// No conflicts exist to jump back to.
-					return fmt.Errorf("We've tried everything mate: %v",
+					return nil, fmt.Errorf("We've tried everything mate: %v",
 						conflicts)
 				}
 				name = conflicts[0]
@@ -204,40 +208,31 @@ func (g *depgraph) solve(vp versionProvider) error {
 					}
 				}
 				if st == nil {
-					return fmt.Errorf("Conflict's activation not found: %v %v",
-						name, activations)
+					return nil,
+						fmt.Errorf("Conflict's activation not found: %v %v",
+							name, activations,
+						)
 				}
-				current = st.current
-				parent = st.parent
-				if verbose {
-					log.Println("Conflict! Restoring:", current.d.Name)
-				}
-				ai = st.ai
-				vi = st.version
+				setState(st.stacknode)
 				vi++
-				stack = st.stack
 				kid = 0
+				stack = st.stack
 				activations = activations[:ai]
 				if verbose {
+					log.Println("Conflict! Restoring:", current.d.Name)
 					log.Println("Activations:", activations)
 				}
 				continue
 			}
 
 			// We can still climb the stack, try it.
-			sn := stack[len(stack)-1]
-			parent = sn.parent
-			current = sn.current
-			if verbose {
-				log.Println("Conflict! Popping:", current.d.Name)
-			}
-			ai = sn.ai
-			vi = sn.version
-			vi++
+			setState(&stack[len(stack)-1])
 			stack = stack[:len(stack)-1]
+			vi++
 			kid = 0
 			activations = activations[:ai]
 			if verbose {
+				log.Println("Conflict! Popping:", current.d.Name)
 				log.Println("Activations:", activations)
 			}
 			continue
@@ -245,16 +240,10 @@ func (g *depgraph) solve(vp versionProvider) error {
 
 		// Add ourselves to the list of activators.
 		ai++
-		activations = append(activations, &activation{
-			name:    name,
-			version: version,
-			state: &savestate{
-				kid:     kid,
-				version: vi,
-				ai:      ai,
-				current: current,
-				parent:  parent,
-				stack:   make([]stacknode, len(stack)),
+		activations = append(activations,
+			&activation{name, version, &savestate{
+				&stacknode{kid, vi, ai, current, parent},
+				make([]stacknode, len(stack)),
 			},
 		})
 		copy(activations[len(activations)-1].state.stack, stack)
@@ -263,9 +252,6 @@ func (g *depgraph) solve(vp versionProvider) error {
 		if verbose {
 			log.Printf("Added: %v %v to activations", name, version)
 			log.Println("Activations:", activations)
-		}
-
-		if verbose {
 			log.Println("Fetching Dependencies for:", name)
 		}
 
@@ -285,34 +271,39 @@ func (g *depgraph) solve(vp versionProvider) error {
 			if verbose {
 				log.Println("Pushing:", name, kid)
 			}
-			stack = append(stack, stacknode{
-				kid:     kid,
-				version: vi,
-				ai:      ai,
-				current: current,
-				parent:  parent,
-			})
-			parent = current
-			current = current.kids[kid]
+			stack = append(stack, stacknode{kid, vi, ai, current, parent})
+			parent, current = current, current.kids[kid]
 			ai = len(activations) - 1
-			kid = 0
-			vi = 0
+			kid, vi = 0, 0
 			continue
 		}
 
 		// Pop off the stack back to parent.
-		sn := stack[len(stack)-1]
-		parent = sn.parent
-		current = sn.current
+		setState(&stack[len(stack)-1])
 		if verbose {
 			log.Println("Popping:", current.d.Name)
 		}
-		kid = sn.kid
-		vi = sn.version
-		ai = sn.ai
 		stack = stack[:len(stack)-1]
 		kid++
 	}
 
-	return nil
+	// Remove the duplicates from the list of activations, check that only
+	// a single version has been activated for sanity.
+	dedupActs := make(map[string]*pack.Version)
+	for _, a := range activations {
+		if version, ok = dedupActs[a.name]; ok {
+			if !a.version.Satisfies(pack.Equal, version) {
+				return nil, fmt.Errorf(
+					"Conflicting versions activated: %v (%v, %v)",
+					a.name, a.version, version)
+			}
+		} else {
+			dedupActs[a.name] = a.version
+		}
+	}
+	if verbose {
+		log.Println(activations)
+		log.Println(dedupActs)
+	}
+	return dedupActs, nil
 }
