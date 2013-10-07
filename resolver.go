@@ -9,8 +9,6 @@ import (
 
 const (
 	initialStackSize        = 20
-	kidOffset               = 32
-	stackIndexMask   uint64 = 0xFFFFFFFF
 )
 
 // versionProvider allows us to look up available versions for each package
