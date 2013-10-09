@@ -2,18 +2,8 @@ package main
 
 import (
 	"github.com/aarondl/pack"
-	"log"
-	"os"
 	. "testing"
 )
-
-func init() {
-	f, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
-	return
-	if err == nil {
-		log.SetOutput(f)
-	}
-}
 
 type testvp struct {
 	graphs map[string][]*depgraph

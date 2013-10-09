@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	initialStackSize        = 20
+	initialStackSize = 20
 )
 
 // versionProvider allows us to look up available versions for each package
