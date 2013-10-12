@@ -12,18 +12,13 @@ import (
 	"strings"
 )
 
-const (
-	GOPATH = "GOPATH"
-)
-
 var (
-	errGoPathNotSet = errors.New("GOPATH does not appear to be set.")
 	errNoImportPath = errors.New("Could not determine the package import path.")
 )
 
 // initPackage first gathers default data (or should)
 // and then gathers the rest of the data from the user via console.
-func initPackage(file string, flags []string,
+func initPackage(file string, args []string,
 	in io.Reader, out io.Writer) error {
 
 	var p pack.Pack
@@ -83,9 +78,6 @@ func getInput(in *bufio.Scanner, out io.Writer, name string, value *string) {
 // getImportPath retrieves an import path of a package.
 func getImportPath(fullpath string) (importPath string, err error) {
 	gopath := os.Getenv(GOPATH)
-	if len(gopath) == 0 {
-		return "", errGoPathNotSet
-	}
 	gopaths := filepath.SplitList(gopath)
 	for i := 0; i < len(gopaths); i++ {
 		gopath = path.Join(gopaths[0], "src")

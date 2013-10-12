@@ -58,7 +58,6 @@ func TestInit_GetInput(t *T) {
 }
 
 func TestInit_GetImportPath(t *T) {
-	gp := os.Getenv(GOPATH)
 	wd, _ := os.Getwd()
 
 	exp := "github.com/aarondl/gopack"
@@ -67,12 +66,6 @@ func TestInit_GetImportPath(t *T) {
 	} else if path != exp {
 		t.Errorf("Wrong import string, expected: %v got: %v", exp, path)
 	}
-
-	os.Setenv(GOPATH, "")
-	if _, err := getImportPath(wd); err != errGoPathNotSet {
-		t.Errorf("Wrong error, expected: %v got: %v", errGoPathNotSet, err)
-	}
-	os.Setenv(GOPATH, gp)
 
 	if _, err := getImportPath("/"); err != errNoImportPath {
 		t.Errorf("Wrong error, expected: %v got: %v", errNoImportPath, err)
