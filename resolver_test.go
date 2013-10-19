@@ -111,7 +111,7 @@ func verifySolutionHelper(d *depnode) bool {
 	return true
 }
 
-func verifyDeps(deps map[string]*pack.Version, expdeps ...string) bool {
+func verifyDeps(deps map[string]*activation, expdeps ...string) bool {
 	if len(deps) != len(expdeps) {
 		return false
 	}
@@ -121,8 +121,8 @@ func verifyDeps(deps map[string]*pack.Version, expdeps ...string) bool {
 		if err != nil {
 			panic("Check input to this function carefully.")
 		}
-		if v, ok := deps[d.Name]; !ok ||
-			!v.Satisfies(pack.Equal, d.Constraints[0].Version) {
+		if pkg, ok := deps[d.Name]; !ok ||
+			!pkg.version.Satisfies(pack.Equal, d.Constraints[0].Version) {
 
 			return false
 		}
@@ -138,7 +138,7 @@ func TestSolver_Basic(t *T) {
 	`)
 
 	var err error
-	var deps map[string]*pack.Version
+	var deps map[string]*activation
 	if deps, err = basic.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(basic.String())
@@ -164,7 +164,7 @@ func TestSolver_DepthFirst(t *T) {
 	`)
 
 	var err error
-	var deps map[string]*pack.Version
+	var deps map[string]*activation
 	if deps, err = depthFirst.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(depthFirst.String())
@@ -190,7 +190,7 @@ func TestSolver_Constraints(t *T) {
 	`)
 
 	var err error
-	var deps map[string]*pack.Version
+	var deps map[string]*activation
 	if deps, err = constraints.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(constraints.String())
@@ -216,7 +216,7 @@ func TestSolver_Backjump(t *T) {
 	`)
 
 	var err error
-	var deps map[string]*pack.Version
+	var deps map[string]*activation
 	if deps, err = backjump.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(backjump.String())
@@ -243,7 +243,7 @@ func TestSolver_Backjumpheaven(t *T) {
 	`)
 
 	var err error
-	var deps map[string]*pack.Version
+	var deps map[string]*activation
 	if deps, err = backjumpHeaven.solve(&repository); err != nil {
 		t.Error("Solution was not found:", err)
 		t.Error(backjumpHeaven.String())

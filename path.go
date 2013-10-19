@@ -11,6 +11,7 @@ import (
 const (
 	GOPATH       = "GOPATH"
 	GOPACKFOLDER = "gopack"
+	SRCFOLDER    = "src"
 )
 
 var (
@@ -38,7 +39,7 @@ func setPaths() error {
 
 // makePacksetPath gets the current packset's directory.
 func makePacksetPath() string {
-	return filepath.Join(gopackPath, config.CurrentSet)
+	return filepath.Join(gopackPath, config.CurrentSet, SRCFOLDER)
 }
 
 // ensureDirectory ensures a directory exists, or it creates it. Returns

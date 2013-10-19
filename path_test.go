@@ -34,11 +34,11 @@ func Test_SetPaths(t *T) {
 	if expect != gopackConfigPath {
 		t.Errorf("Expected: %s, got: %s", expect, gopackPath)
 	}
-	expect = filepath.Join("/tmp/", GOPACKFOLDER, config.CurrentSet)
+	expect = filepath.Join("/tmp/", GOPACKFOLDER, config.CurrentSet, SRCFOLDER)
 	if expect != gopacksetPath {
 		t.Errorf("Expected: %s, got: %s", expect, gopackPath)
 	}
-	expect = fakeGoPath + ":/tmp/" + GOPACKFOLDER + "/" + config.CurrentSet
+	expect = fakeGoPath + string(filepath.ListSeparator) + expect
 	if expect != combinedPath {
 		t.Errorf("Expected: %s, got: %s", expect, combinedPath)
 	}

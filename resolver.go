@@ -39,7 +39,7 @@ type savestate struct {
 
 // activation is the details of a packages activation.
 type activation struct {
-	name    string
+	*pack.Dependency
 	version *pack.Version
 	state   *savestate
 }
@@ -47,7 +47,7 @@ type activation struct {
 // String is used to debug activations.
 func (a activation) String() string {
 	var buf bytes.Buffer
-	buf.WriteString(a.name)
+	buf.WriteString(a.Name)
 	if a.version != nil {
 		buf.WriteRune(space)
 		buf.WriteString(a.version.String())
@@ -59,7 +59,7 @@ func (a activation) String() string {
 solve a dependency graph. This algorithm is a depth first search with
 backjumping to resolve conflicts.
 */
-func (g *depgraph) solve(vp versionProvider) (map[string]*pack.Version, error) {
+func (g *depgraph) solve(vp versionProvider) (map[string]*activation, error) {
 	if len(g.head.kids) == 0 {
 		return nil, nil
 	}
@@ -131,7 +131,7 @@ func (g *depgraph) solve(vp versionProvider) (map[string]*pack.Version, error) {
 		// main activation point, with the others simply being save points.
 		active = nil
 		for j := 0; j < len(activations); j++ {
-			if activations[j].name == name {
+			if activations[j].Name == name {
 				active = activations[j]
 				break
 			}
@@ -200,7 +200,7 @@ func (g *depgraph) solve(vp versionProvider) (map[string]*pack.Version, error) {
 				conflicts = conflicts[1:]
 				var st *savestate
 				for i := 0; i < len(activations); i++ {
-					if activations[i].name == name {
+					if activations[i].Name == name {
 						st = activations[i].state
 						break
 					}
@@ -239,7 +239,7 @@ func (g *depgraph) solve(vp versionProvider) (map[string]*pack.Version, error) {
 		// Add ourselves to the list of activators.
 		ai++
 		activations = append(activations,
-			&activation{name, version, &savestate{
+			&activation{current.d, version, &savestate{
 				&stacknode{kid, vi, ai, current, parent},
 				make([]stacknode, len(stack)),
 			}},
@@ -287,16 +287,16 @@ func (g *depgraph) solve(vp versionProvider) (map[string]*pack.Version, error) {
 
 	// Remove the duplicates from the list of activations, check that only
 	// a single version has been activated for sanity.
-	dedupActs := make(map[string]*pack.Version)
+	dedupActs := make(map[string]*activation)
 	for _, a := range activations {
-		if version, ok = dedupActs[a.name]; ok {
-			if !a.version.Satisfies(pack.Equal, version) {
+		if active, ok = dedupActs[a.Name]; ok {
+			if !a.version.Satisfies(pack.Equal, active.version) {
 				return nil, fmt.Errorf(
 					"Conflicting versions activated: %v (%v, %v)",
-					a.name, a.version, version)
+					a.Name, a.version, version)
 			}
 		} else {
-			dedupActs[a.name] = a.version
+			dedupActs[a.Name] = a
 		}
 	}
 	if verbose {

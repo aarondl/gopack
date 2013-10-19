@@ -8,11 +8,20 @@ import (
 )
 
 func Test_SetPackset(t *T) {
+	if Short() {
+		t.SkipNow()
+	}
+	if err := setPaths(); err != nil {
+		t.Fatal("Could not set paths:", err)
+	}
 	var pushPath = gopackPath
 	gopackPath = os.TempDir()
 	defer func() {
+		err := os.RemoveAll(filepath.Join(gopackPath, "testset"))
+		if err != nil {
+			t.Error(err)
+		}
 		gopackPath = pushPath
-		os.Remove(filepath.Join(os.TempDir(), "testset"))
 	}()
 
 	var buf bytes.Buffer
