@@ -11,13 +11,18 @@ import (
 func TestInit(t *T) {
 	var input = bytes.NewBufferString("\n\n\n\n\n\n\n\n")
 	var devnull bytes.Buffer
+	var err error
+	PATHS, err = pack.NewPathsFromGopath(DEFAULTSET)
+	if err != nil {
+		t.Error("Unexpected error:", err)
+	}
 
 	file := "test.yaml"
 	if err := initPackage(file, nil, input, &devnull); err != nil {
 		t.Error("Unexpected Error:", err)
 	}
 
-	_, err := os.Stat(file)
+	_, err = os.Stat(file)
 	if os.IsNotExist(err) {
 		t.Errorf("Expected %s to exist but got:", err)
 	}
@@ -58,6 +63,11 @@ func TestInit_GetInput(t *T) {
 }
 
 func TestInit_GetImportPath(t *T) {
+	var err error
+	PATHS, err = pack.NewPathsFromGopath(DEFAULTSET)
+	if err != nil {
+		t.Error("Unexpected error:", err)
+	}
 	wd, _ := os.Getwd()
 
 	exp := "github.com/aarondl/gopack"

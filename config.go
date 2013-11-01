@@ -1,10 +1,12 @@
 package main
 
 import (
+	"github.com/aarondl/pack"
 	"io"
 	"io/ioutil"
 	"launchpad.net/goyaml"
 	"os"
+	"path/filepath"
 )
 
 const (
@@ -20,16 +22,17 @@ type Configuration struct {
 	CurrentSet string
 }
 
-// ensureConfig ensures that a configuration file is present.
+// ensureConfig ensures that a configuration file is present. Returns true
+// if a new config was created.
 func ensureConfig() (bool, error) {
-	_, err := os.Stat(gopackConfigPath)
+	_, err := os.Stat(filepath.Join(PATHS.GopackPath, CONFIGFILE))
 	if err == nil {
 		return false, nil
 	}
 	if !os.IsNotExist(err) {
 		return false, err
 	}
-	_, err = ensureDirectory(gopackPath)
+	_, err = pack.EnsureDirectory(PATHS.GopackPath)
 	if err != nil {
 		return false, err
 	}
@@ -40,7 +43,7 @@ func ensureConfig() (bool, error) {
 
 // loadConfig loads the configuration.
 func loadConfig() error {
-	file, err := os.Open(gopackConfigPath)
+	file, err := os.Open(filepath.Join(PATHS.GopackPath, CONFIGFILE))
 	if err != nil {
 		return err
 	}
@@ -64,7 +67,7 @@ func loadConfigReader(in io.Reader) error {
 
 // saveConfig writes the configuration.
 func saveConfig() error {
-	file, err := os.Create(gopackConfigPath)
+	file, err := os.Create(filepath.Join(PATHS.GopackPath, CONFIGFILE))
 	if err != nil {
 		return err
 	}

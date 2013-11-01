@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/aarondl/pack"
 	"io"
 )
 
@@ -12,8 +13,8 @@ func setPackset(args []string, out io.Writer) error {
 	}
 
 	config.CurrentSet = args[0]
-	newpath := makePacksetPath()
-	created, err := ensureDirectory(newpath)
+	PATHS.SetPackset(config.CurrentSet)
+	created, err := pack.EnsureDirectory(PATHS.GopacksetPath)
 	if err != nil {
 		return err
 	}

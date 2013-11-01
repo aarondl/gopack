@@ -7,7 +7,6 @@ import (
 	"github.com/aarondl/pack"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -39,7 +38,7 @@ func initPackage(file string, args []string,
 	fmt.Fprintf(out, "Creating initial packfile...")
 
 	// Get package name
-	p.Name = path.Base(wd)
+	p.Name = filepath.Base(wd)
 	getInput(s, out, "Name", &p.Name)
 
 	// Get import path
@@ -77,12 +76,11 @@ func getInput(in *bufio.Scanner, out io.Writer, name string, value *string) {
 
 // getImportPath retrieves an import path of a package.
 func getImportPath(fullpath string) (importPath string, err error) {
-	gopath := os.Getenv(GOPATH)
-	gopaths := filepath.SplitList(gopath)
-	for i := 0; i < len(gopaths); i++ {
-		gopath = path.Join(gopaths[0], "src")
-		if index := strings.Index(fullpath, gopath); index >= 0 {
-			importPath = fullpath[len(gopath)+1:]
+	paths := append(PATHS.Gopaths, PATHS.CombinedPath)
+	for _, checkpath := range paths {
+		srcpath := filepath.Join(checkpath, "src")
+		if index := strings.Index(fullpath, srcpath); index == 0 {
+			importPath = fullpath[len(srcpath)+1:]
 		}
 	}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"github.com/aarondl/pack"
 	"os"
 	"path/filepath"
 	. "testing"
@@ -11,21 +12,22 @@ func Test_SetPackset(t *T) {
 	if Short() {
 		t.SkipNow()
 	}
-	if err := setPaths(); err != nil {
-		t.Fatal("Could not set paths:", err)
+	var err error
+
+	testdir := filepath.Join(os.TempDir(), "setpacksettest")
+	PATHS, err = pack.NewPaths(testdir, "default")
+	config.CurrentSet = DEFAULTSET
+	if err != nil {
+		t.Error("Unexpected error:", err)
 	}
-	var pushPath = gopackPath
-	gopackPath = os.TempDir()
-	defer func() {
-		err := os.RemoveAll(filepath.Join(gopackPath, "testset"))
-		if err != nil {
-			t.Error(err)
-		}
-		gopackPath = pushPath
-	}()
+	err = os.MkdirAll(PATHS.GopacksetPath, 0770)
+	if err != nil {
+		t.Error("Unexpected error:", err)
+	}
+	defer os.RemoveAll(testdir)
 
 	var buf bytes.Buffer
-	err := setPackset([]string{"testset"}, &buf)
+	err = setPackset([]string{"testset"}, &buf)
 	if err != nil {
 		t.Error("Unexpected error:", err)
 	}
